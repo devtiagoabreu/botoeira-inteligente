@@ -882,7 +882,7 @@ void setup() {
   server.on("/logout", handleLogout);
   server.on("/users", handleUsers);
   server.onNotFound(handleNotFound);
-  server.collectHeaders("User-Agent");
+  server.collectHeaders("User-Agent", "Cookie");
   server.begin();
   Serial.println("Servidor web iniciado na porta 80");
   timeClient.begin();
