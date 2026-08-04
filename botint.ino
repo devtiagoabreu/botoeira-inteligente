@@ -124,7 +124,16 @@ void carregarUsuarios() {
     numUsuarios++;
   }
   f.close();
-  Serial.println(String(numUsuarios) + " usuarios carregados");
+  if (numUsuarios == 0) {
+    Serial.println("Arquivo de usuarios vazio/invalido; recriando padroes");
+    SPIFFS.remove(USERS_FILE);
+    criarUsuariosPadrao();
+    return carregarUsuarios();
+  }
+  Serial.println(String(numUsuarios) + " usuarios carregados:");
+  for (int i = 0; i < numUsuarios; i++) {
+    Serial.println(" - " + String(usuarios[i].nome) + " (ativo=" + (usuarios[i].ativo ? "1" : "0") + " admin=" + (usuarios[i].admin ? "1" : "0") + ")");
+  }
 }
 
 void salvarUsuarios() {
@@ -666,10 +675,13 @@ void handleLogin() {
     String senha = server.arg("senha");
     if (validarLogin(nome, senha)) {
       criarSessao(nome);
+      Serial.println("Login OK: " + nome);
       server.sendHeader("Location", "/");
       server.send(302, "text/plain", "");
       return;
     }
+    int diagIdx = indiceUsuario(nome);
+    Serial.println("Falha login: usuario='" + nome + "' numUsuarios=" + String(numUsuarios) + " indice=" + String(diagIdx) + " ativo=" + String((diagIdx >= 0 && usuarios[diagIdx].ativo) ? "1" : "0"));
     String html = "<!DOCTYPE html><html><head>";
     html += getCSS(modoNoturno);
     html += "</head><body><div class='ct' style='max-width:400px'>";
