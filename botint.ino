@@ -197,8 +197,7 @@ bool ehAdmin() {
 
 bool exigeLogin() {
   if (autenticado()) return true;
-  server.sendHeader("Location", "/login");
-  server.send(302, "text/plain", "");
+  redirecionar("/login");
   return false;
 }
 
@@ -207,6 +206,14 @@ bool exigeAdmin() {
   if (ehAdmin()) return true;
   server.send(200, "text/plain", "Acesso negado");
   return false;
+}
+
+void redirecionar(String destino) {
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
+  html += "<meta http-equiv='refresh' content='0; url=" + destino + "'>";
+  html += "<script>location.href='" + destino + "';</script>";
+  html += "</head><body></body></html>";
+  server.send(200, "text/html", html);
 }
 
 void criarSessao(String nome) {
@@ -676,8 +683,7 @@ void handleLogin() {
     if (validarLogin(nome, senha)) {
       criarSessao(nome);
       Serial.println("Login OK: " + nome);
-      server.sendHeader("Location", "/");
-      server.send(302, "text/plain", "");
+      redirecionar("/");
       return;
     }
     int diagIdx = indiceUsuario(nome);
@@ -696,8 +702,7 @@ void handleLogin() {
     return;
   }
   if (autenticado()) {
-    server.sendHeader("Location", "/");
-    server.send(302, "text/plain", "");
+    redirecionar("/");
     return;
   }
   String html = "<!DOCTYPE html><html><head>";
@@ -715,8 +720,7 @@ void handleLogin() {
 
 void handleLogout() {
   encerrarSessao();
-  server.sendHeader("Location", "/login");
-  server.send(302, "text/plain", "");
+  redirecionar("/login");
 }
 
 void handleUsers() {
@@ -768,8 +772,7 @@ void handleUsers() {
         salvarUsuarios();
       }
     }
-    server.sendHeader("Location", "/users");
-    server.send(302, "text/plain", "");
+    redirecionar("/users");
     return;
   }
   String html = "<!DOCTYPE html><html><head>";
