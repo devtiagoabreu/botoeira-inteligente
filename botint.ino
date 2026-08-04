@@ -1,45 +1,25 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <EEPROM.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
 #include <ArduinoJson.h>
 
 #define RELE_PIN 0
 #define LED_PIN 2
 #define EEPROM_SIZE 1024
-#define MAX_HORARIOS 6
+#define TEMPO_PULSO_MS 1000
 
 struct WiFiConfig {
   char ssid[32];
   char password[64];
 };
 
-struct Horario {
-  int hora;
-  int minuto;
-  int segundo;
-  bool ativo;
-  bool dias[7];
-};
-
-struct ConfigHorarios {
-  Horario horarios[MAX_HORARIOS];
-  bool modoNoturno;
-  bool controleManual;
-};
-
 ESP8266WebServer server(80);
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", -3 * 3600, 60000);
 
 WiFiConfig wifiConfig;
-ConfigHorarios configHorarios;
+bool modoNoturno = false;
 bool releEstado = false;
 String modoOperacao = "AP";
-bool modoNoturnoAtual = false;
-
-const char* nomesDias[] = {"Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"};
+unsigned long tempoPulsoInicio = 0;
 
 void salvarWiFiConfig() {
   EEPROM.begin(EEPROM_SIZE);
@@ -54,30 +34,24 @@ void carregarWiFiConfig() {
   EEPROM.get(0, wifiConfig);
   EEPROM.end();
   if (wifiConfig.ssid[0] == 0xFF || wifiConfig.ssid[0] == 0x00) {
-    strcpy(wifiConfig.ssid, "pmt-geral");
-    strcpy(wifiConfig.password, "pmt@852456DECO");
+    strcpy(wifiConfig.ssid, "");
+    strcpy(wifiConfig.password, "");
   }
 }
 
-void salvarHorarios() {
+void salvarModoNoturno() {
   EEPROM.begin(EEPROM_SIZE);
-  EEPROM.put(sizeof(WiFiConfig), configHorarios);
+  EEPROM.put(sizeof(WiFiConfig), modoNoturno);
   EEPROM.commit();
   EEPROM.end();
-  Serial.println("Horarios salvos");
+  Serial.println("Modo noturno salvo");
 }
 
-void carregarHorarios() {
+void carregarModoNoturno() {
   EEPROM.begin(EEPROM_SIZE);
-  EEPROM.get(sizeof(WiFiConfig), configHorarios);
+  EEPROM.get(sizeof(WiFiConfig), modoNoturno);
   EEPROM.end();
-  if (configHorarios.horarios[0].hora == 0 && configHorarios.horarios[0].minuto == 0) {
-    for (int i = 0; i < MAX_HORARIOS; i++) {
-      configHorarios.horarios[i] = {0, 0, 0, false, {false, false, false, false, false, false, false}};
-    }
-    configHorarios.modoNoturno = false;
-    configHorarios.controleManual = true;
-  }
+  if (modoNoturno != 0 && modoNoturno != 1) modoNoturno = false;
 }
 
 void ligarRele() {
@@ -92,13 +66,9 @@ void desligarRele() {
   Serial.println("Rele DESLIGADO");
 }
 
-void toggleRele() {
-  if (releEstado) desligarRele();
-  else ligarRele();
-}
-
 String getCSS(bool noturno) {
-  String css = "<style>";
+  String css = "<meta name='viewport' content='width=device-width,initial-scale=1.0'>";
+  css += "<style>";
   if (noturno) {
     css += "body{font-family:Arial,sans-serif;margin:0;padding:20px;background:#121212;color:#e0e0e0;}";
     css += ".ct{max-width:600px;margin:0 auto;background:#1e1e1e;padding:20px;border-radius:10px;box-shadow:0 0 15px rgba(0,0,0,.5);}";
@@ -135,11 +105,10 @@ String getCSS(bool noturno) {
 }
 
 void handleRoot() {
-  modoNoturnoAtual = configHorarios.modoNoturno;
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1.0'>";
   html += "<title>Botoeira Inteligente</title>";
-  html += getCSS(modoNoturnoAtual);
+  html += getCSS(modoNoturno);
   html += "<script>";
   html += "function acionar(){fetch('/acionar',{method:'POST'}).then(()=>location.reload())}";
   html += "function toggleModo(){fetch('/toggleModo',{method:'POST'}).then(()=>location.reload())}";
@@ -147,51 +116,27 @@ void handleRoot() {
   html += "<h1>Botoeira Inteligente</h1>";
   html += "<div style='text-align:center;margin:20px 0;'>";
   html += "<button onclick='toggleModo()' style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer;font-size:14px;'>";
-  html += modoNoturnoAtual ? "Modo Claro" : "Modo Escuro";
+  html += modoNoturno ? "Modo Claro" : "Modo Escuro";
   html += "</button></div>";
   html += "<div class='sc'><div class='st'>";
   html += "<strong>Modo:</strong> " + modoOperacao + " | ";
   html += "<strong>Wi-Fi:</strong> " + String((modoOperacao == "STA") ? WiFi.SSID() : "botoeira (AP)") + " | ";
   html += "<strong>IP:</strong> " + String((modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1") + "<br>";
-  html += "<strong>Hora:</strong> " + timeClient.getFormattedTime() + " | ";
-  html += "<strong>Dia:</strong> " + String(nomesDias[timeClient.getDay()]) + " | ";
   html += "<strong>Rele:</strong> " + String(releEstado ? "ATIVADO" : "DESLIGADO");
   html += "</div></div>";
   html += "<div class='sc'>";
   html += "<h2 style='text-align:center;margin-bottom:5px'>Painel de Acionamento</h2>";
-  html += "<p style='text-align:center;color:#888;font-size:13px;margin-top:0'>Toque no botao para acionar</p>";
+  html += "<p style='text-align:center;color:#888;font-size:13px;margin-top:0'>Toque no botao para abrir o portao</p>";
   html += "<div class='bp'>";
   html += "<div style='text-align:center'>";
   html += "<button class='bf bg' style='opacity:.5;cursor:not-allowed' disabled title='Em breve'>VERDE</button>";
   html += "<div class='lb' style='color:#0a0'>RESERVA</div></div>";
   html += "<div style='text-align:center'>";
-  if (releEstado) {
-    html += "<button class='bf bv ba' onclick='acionar()'>DESLIGAR</button>";
-  } else {
-    html += "<button class='bf bv' onclick='acionar()'>ACIONAR</button>";
-  }
-  html += "<div class='lb' style='color:#c00'>ACIONAR</div></div>";
+  html += "<button class='bf bv' onclick='acionar()'>ABRIR</button>";
+  html += "<div class='lb' style='color:#c00'>ABRIR PORTAO</div></div>";
   html += "</div></div>";
   html += "<div class='sc'><p style='text-align:center;margin:5px 0'>";
-  html += "Modo: <strong>" + String(configHorarios.controleManual ? "Liga/Desliga" : "Temporizado (10s)") + "</strong>";
-  html += " | <a href='/configGeral'>Alterar</a></p></div>";
-  html += "<div class='sc'><h2>Horarios Programados</h2>";
-  html += "<table><tr><th>#</th><th>Hora</th><th>Min</th><th>Seg</th><th>Dias</th><th>Status</th></tr>";
-  for (int i = 0; i < MAX_HORARIOS; i++) {
-    html += "<tr><td>" + String(i + 1) + "</td>";
-    html += "<td>" + String(configHorarios.horarios[i].hora) + "</td>";
-    html += "<td>" + String(configHorarios.horarios[i].minuto) + "</td>";
-    html += "<td>" + String(configHorarios.horarios[i].segundo) + "</td>";
-    String diasStr = "";
-    for (int d = 0; d < 7; d++) {
-      if (configHorarios.horarios[i].dias[d]) diasStr += nomesDias[d][0];
-    }
-    html += "<td>" + (diasStr.length() > 0 ? diasStr : "-") + "</td>";
-    html += "<td>" + String(configHorarios.horarios[i].ativo ? "ON" : "OFF") + "</td></tr>";
-  }
-  html += "</table><div style='text-align:center;margin-top:10px'>";
-  html += "<a href='/horarios'><button style='padding:10px 20px;border:none;border-radius:5px;cursor:pointer;font-size:14px;background:#2196F3;color:#fff'>Configurar Horarios</button></a>";
-  html += "</div></div>";
+  html += "Modo: <strong>Pulso (1s)</strong></p></div>";
   html += "<div class='sc' style='text-align:center'>";
   html += "<a href='/config'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer;margin:3px'>Wi-Fi</button></a> ";
   html += "<a href='/configGeral'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer;margin:3px'>Config</button></a> ";
@@ -202,20 +147,16 @@ void handleRoot() {
 
 void handleAcionar() {
   if (server.method() == HTTP_POST) {
-    if (configHorarios.controleManual) {
-      toggleRele();
-      server.send(200, "text/plain", releEstado ? "ATIVADO" : "DESLIGADO");
-    } else {
-      ligarRele();
-      server.send(200, "text/plain", "ATIVADO_TEMPORIZADO");
-    }
+    ligarRele();
+    tempoPulsoInicio = millis();
+    server.send(200, "text/plain", "PULSO_ACIONADO");
   }
 }
 
 void handleToggleModo() {
   if (server.method() == HTTP_POST) {
-    configHorarios.modoNoturno = !configHorarios.modoNoturno;
-    salvarHorarios();
+    modoNoturno = !modoNoturno;
+    salvarModoNoturno();
     server.send(200, "text/plain", "ok");
   }
 }
@@ -229,7 +170,7 @@ void handleConfig() {
       strncpy(wifiConfig.password, password.c_str(), sizeof(wifiConfig.password) - 1);
       salvarWiFiConfig();
       String html = "<html><head><title>Salvo</title>";
-      html += getCSS(modoNoturnoAtual);
+      html += getCSS(modoNoturno);
       html += "</head><body><div class='ct' style='text-align:center;padding:50px'>";
       html += "<h1>Configuracao Salva!</h1>";
       html += "<p>Reiniciando em <span id='cd'>5</span> segundos...</p>";
@@ -241,7 +182,7 @@ void handleConfig() {
     }
   }
   String html = "<html><head><title>Wi-Fi</title>";
-  html += getCSS(modoNoturnoAtual);
+  html += getCSS(modoNoturno);
   html += "</head><body><div class='ct'>";
   html += "<h1>Configurar Wi-Fi</h1>";
   html += "<form method='POST'>";
@@ -256,76 +197,15 @@ void handleConfig() {
 }
 
 void handleConfigGeral() {
-  if (server.method() == HTTP_POST) {
-    configHorarios.controleManual = server.hasArg("controleManual");
-    salvarHorarios();
-    String html = "<html><head><title>Salvo</title>";
-    html += getCSS(modoNoturnoAtual);
-    html += "<script>setTimeout(()=>location.href='/',2000);</script>";
-    html += "</head><body><div class='ct' style='text-align:center;padding:50px'>";
-    html += "<h1>Configuracao Salva!</h1></div></body></html>";
-    server.send(200, "text/html", html);
-    return;
-  }
   String html = "<html><head><title>Config Geral</title>";
-  html += getCSS(modoNoturnoAtual);
+  html += getCSS(modoNoturno);
   html += "</head><body><div class='ct'>";
   html += "<h1>Configuracoes Gerais</h1>";
-  html += "<form method='POST'><div class='sc'>";
-  html += "<h3>Modo de Controle</h3>";
-  html += "<p><label><input type='checkbox' name='controleManual' value='1' ";
-  html += String(configHorarios.controleManual ? "checked" : "") + ">";
-  html += " Botao liga/desliga manualmente</label></p>";
-  html += "<p><small>Se desmarcado, ativacao temporizada por 10 segundos.</small></p>";
+  html += "<div class='sc'>";
+  html += "<h3>Comportamento do Botao</h3>";
+  html += "<p>O botao <strong>ABRIR</strong> envia um pulso de <strong>1 segundo</strong> ao rele para abrir o portao.</p>";
   html += "</div>";
-  html += "<button type='submit' style='padding:10px 20px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Salvar</button>";
-  html += "</form><br><a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
-  html += "</div></body></html>";
-  server.send(200, "text/html", html);
-}
-
-void handleHorarios() {
-  if (server.method() == HTTP_POST) {
-    for (int i = 0; i < MAX_HORARIOS; i++) {
-      configHorarios.horarios[i].hora = server.arg("hora" + String(i)).toInt();
-      configHorarios.horarios[i].minuto = server.arg("minuto" + String(i)).toInt();
-      configHorarios.horarios[i].segundo = server.arg("segundo" + String(i)).toInt();
-      configHorarios.horarios[i].ativo = server.hasArg("ativo" + String(i));
-      for (int d = 0; d < 7; d++) {
-        configHorarios.horarios[i].dias[d] = server.hasArg("dia" + String(i) + "_" + String(d));
-      }
-    }
-    salvarHorarios();
-    String html = "<html><head><title>Salvo</title>";
-    html += getCSS(modoNoturnoAtual);
-    html += "<script>setTimeout(()=>location.href='/',2000);</script>";
-    html += "</head><body><div class='ct' style='text-align:center;padding:50px'>";
-    html += "<h1>Horarios salvos!</h1></div></body></html>";
-    server.send(200, "text/html", html);
-    return;
-  }
-  String html = "<html><head><title>Horarios</title>";
-  html += getCSS(modoNoturnoAtual);
-  html += "</head><body><div class='ct'>";
-  html += "<h1>Programar Horarios</h1>";
-  html += "<form method='POST'><table>";
-  html += "<tr><th>#</th><th>Hora</th><th>Min</th><th>Seg</th><th>Dias</th><th>Ativo</th></tr>";
-  for (int i = 0; i < MAX_HORARIOS; i++) {
-    html += "<tr><td>" + String(i + 1) + "</td>";
-    html += "<td><input type='number' name='hora" + String(i) + "' value='" + String(configHorarios.horarios[i].hora) + "' min='0' max='23' style='width:60px'></td>";
-    html += "<td><input type='number' name='minuto" + String(i) + "' value='" + String(configHorarios.horarios[i].minuto) + "' min='0' max='59' style='width:60px'></td>";
-    html += "<td><input type='number' name='segundo" + String(i) + "' value='" + String(configHorarios.horarios[i].segundo) + "' min='0' max='59' style='width:60px'></td>";
-    html += "<td><div style='display:flex;flex-wrap:wrap;justify-content:center'>";
-    for (int d = 0; d < 7; d++) {
-      html += "<label style='font-size:12px;margin:2px'><input type='checkbox' name='dia" + String(i) + "_" + String(d) + "' value='1' ";
-      html += String(configHorarios.horarios[i].dias[d] ? "checked" : "") + ">" + nomesDias[d] + "</label>";
-    }
-    html += "</div></td>";
-    html += "<td><input type='checkbox' name='ativo" + String(i) + "' value='1' " + (configHorarios.horarios[i].ativo ? "checked" : "") + "></td></tr>";
-  }
-  html += "</table><br>";
-  html += "<button type='submit' style='padding:10px 20px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Salvar Horarios</button>";
-  html += "</form><br><a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
+  html += "<a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
   html += "</div></body></html>";
   server.send(200, "text/html", html);
 }
@@ -335,11 +215,8 @@ void handleStatus() {
   doc["modo"] = modoOperacao;
   doc["wifi_ssid"] = (modoOperacao == "STA") ? WiFi.SSID() : "botoeira";
   doc["ip"] = (modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1";
-  doc["hora"] = timeClient.getFormattedTime();
-  doc["dia_semana"] = nomesDias[timeClient.getDay()];
   doc["rele"] = releEstado;
-  doc["modo_noturno"] = configHorarios.modoNoturno;
-  doc["controle_manual"] = configHorarios.controleManual;
+  doc["modo_noturno"] = modoNoturno;
   String response;
   serializeJson(doc, response);
   server.send(200, "application/json", response);
@@ -347,32 +224,12 @@ void handleStatus() {
 
 void handleNotFound() {
   String html = "<html><head><title>404</title>";
-  html += getCSS(modoNoturnoAtual);
+  html += getCSS(modoNoturno);
   html += "</head><body><div class='ct' style='text-align:center;padding:50px'>";
   html += "<h1>404 - Pagina nao encontrada</h1>";
   html += "<a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
   html += "</div></body></html>";
   server.send(404, "text/html", html);
-}
-
-void verificarHorarios() {
-  if (!timeClient.isTimeSet()) return;
-  int h = timeClient.getHours();
-  int m = timeClient.getMinutes();
-  int s = timeClient.getSeconds();
-  int dia = timeClient.getDay();
-  for (int i = 0; i < MAX_HORARIOS; i++) {
-    if (configHorarios.horarios[i].ativo &&
-        configHorarios.horarios[i].hora == h &&
-        configHorarios.horarios[i].minuto == m &&
-        configHorarios.horarios[i].segundo == s &&
-        configHorarios.horarios[i].dias[dia] &&
-        !releEstado) {
-      ligarRele();
-      Serial.println("Rele acionado automaticamente: " + String(h) + ":" + String(m) + ":" + String(s));
-      break;
-    }
-  }
 }
 
 void conectarWiFi() {
@@ -415,20 +272,17 @@ void setup() {
   Serial.println("Pino do rele configurado NO (Normalmente Aberto)");
   Serial.println("Logica: HIGH = Ligado, LOW = Desligado");
   carregarWiFiConfig();
-  carregarHorarios();
+  carregarModoNoturno();
   conectarWiFi();
   server.on("/", handleRoot);
   server.on("/acionar", HTTP_POST, handleAcionar);
   server.on("/toggleModo", HTTP_POST, handleToggleModo);
   server.on("/config", handleConfig);
   server.on("/configGeral", handleConfigGeral);
-  server.on("/horarios", handleHorarios);
   server.on("/status", handleStatus);
   server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("Servidor web iniciado na porta 80");
-  timeClient.begin();
-  timeClient.update();
   Serial.println("Sistema pronto!");
   Serial.println("Acesse: http://" + String((modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1"));
   Serial.println("============================================================");
@@ -436,19 +290,8 @@ void setup() {
 
 void loop() {
   server.handleClient();
-  timeClient.update();
-  static unsigned long tempoDesligamento = 0;
-  if (!configHorarios.controleManual && releEstado) {
-    if (millis() - tempoDesligamento >= 10000) {
-      desligarRele();
-    }
-  } else {
-    tempoDesligamento = millis();
-  }
-  static unsigned long ultimaVerificacao = 0;
-  if (millis() - ultimaVerificacao >= 1000) {
-    verificarHorarios();
-    ultimaVerificacao = millis();
+  if (releEstado && millis() - tempoPulsoInicio >= TEMPO_PULSO_MS) {
+    desligarRele();
   }
   delay(10);
 }
