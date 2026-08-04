@@ -79,6 +79,7 @@ String getCSS(bool noturno) {
     css += "th,td{border:1px solid #444;padding:8px;text-align:center;}";
     css += "th{background:#333;}";
     css += ".st{padding:10px;margin:10px 0;background:#2d2d2d;border-radius:5px;border-left:4px solid #bb86fc;}";
+    css += ".rede{padding:10px;margin:4px 0;background:#2d2d2d;border:1px solid #444;border-radius:5px;cursor:pointer;color:#e0e0e0;}";
     css += "input,select{background:#333;color:#fff;border:1px solid #555;padding:8px;border-radius:4px;}";
     css += "a{color:#bb86fc;text-decoration:none;}";
   } else {
@@ -90,6 +91,7 @@ String getCSS(bool noturno) {
     css += "th,td{border:1px solid #ddd;padding:8px;text-align:center;}";
     css += "th{background:#f2f2f2;}";
     css += ".st{padding:10px;margin:10px 0;background:#e3f2fd;border-radius:5px;}";
+    css += ".rede{padding:10px;margin:4px 0;background:#f5f5f5;border:1px solid #ddd;border-radius:5px;cursor:pointer;}";
   }
   css += ".bp{display:flex;justify-content:center;gap:30px;margin:30px 0;}";
   css += ".bf{width:140px;height:140px;border-radius:50%;border:4px solid #555;cursor:pointer;font-size:16px;font-weight:bold;color:#fff;text-shadow:1px 1px 2px rgba(0,0,0,.5);box-shadow:0 6px 20px rgba(0,0,0,.3);transition:all .15s;display:flex;align-items:center;justify-content:center;}";
@@ -184,14 +186,19 @@ void handleConfig() {
   }
   String html = "<html><head><title>Wi-Fi</title>";
   html += getCSS(modoNoturno);
-  html += "<script>function mostrarSenha(){var p=document.getElementById('password');p.type=p.type==='password'?'text':'password';}</script>";
+  html += "<script>function selecionar(s){document.getElementById('ssid').value=s;}";
+  html += "function mostrarSenha(){var p=document.getElementById('password');p.type=p.type==='password'?'text':'password';}</script>";
   html += "</head><body><div class='ct'>";
   html += "<h1>Configurar Wi-Fi</h1>";
-  html += "<p style='text-align:center;color:#888;font-size:13px'>Toque no campo SSID para escolher a rede</p>";
+  if (listaRedesHtml.length() > 0) {
+    html += "<p style='text-align:center;color:#888;font-size:13px'>Toque na rede desejada:</p>";
+    html += "<div style='max-height:220px;overflow-y:auto'>" + listaRedesHtml + "</div>";
+  } else {
+    html += "<p style='text-align:center;color:#888'>Nenhuma rede encontrada. Reinicie o aparelho para escanear novamente.</p>";
+  }
   html += "<form method='POST'>";
   html += "<p><label>SSID:</label><br>";
-  html += "<input type='text' name='ssid' list='redes' value='" + String(wifiConfig.ssid) + "' style='width:100%' required>";
-  html += "<datalist id='redes'>" + listaRedesHtml + "</datalist></p>";
+  html += "<input type='text' name='ssid' id='ssid' value='" + String(wifiConfig.ssid) + "' style='width:100%' required></p>";
   html += "<p><label>Senha:</label><br>";
   html += "<input type='password' name='password' id='password' value='" + String(wifiConfig.password) + "' style='width:100%'>";
   html += "<button type='button' onclick='mostrarSenha()' style='margin-top:5px;padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Mostrar senha</button></p>";
@@ -279,10 +286,11 @@ void setup() {
   carregarWiFiConfig();
   carregarModoNoturno();
   Serial.println("Escaneando redes Wi-Fi...");
+  delay(200);
   int numRedes = WiFi.scanNetworks();
   for (int i = 0; i < numRedes; i++) {
     if (WiFi.SSID(i).length() > 0) {
-      listaRedesHtml += "<option value='" + WiFi.SSID(i) + "'>";
+      listaRedesHtml += "<div class='rede' data-ssid='" + WiFi.SSID(i) + "' onclick='selecionar(this.dataset.ssid)'>" + WiFi.SSID(i) + "</div>";
     }
   }
   Serial.println(String(numRedes) + " redes encontradas");
