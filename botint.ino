@@ -169,6 +169,7 @@ uint32_t tokenDaSessao() {
   int e = cookie.indexOf(';', p);
   String t = (e < 0) ? cookie.substring(p) : cookie.substring(p, e);
   t.trim();
+  Serial.println("Cookie recebido: [" + cookie + "] token=" + t);
   return (uint32_t)t.toInt();
 }
 
@@ -217,7 +218,11 @@ void redirecionar(String destino) {
 }
 
 void criarSessao(String nome) {
-  uint32_t token = ((uint32_t)os_random()) & 0x7FFFFFFF;
+  static uint32_t contador = 0;
+  uint32_t token;
+  do {
+    token = (millis() + (contador += 977)) & 0x7FFFFFFF;
+  } while (token == 0);
   unsigned long agora = millis();
   int slot = -1;
   unsigned long maisAntigo = agora;
@@ -232,6 +237,7 @@ void criarSessao(String nome) {
   sessoes[slot].token = token;
   nome.toCharArray(sessoes[slot].nome, sizeof(sessoes[slot].nome));
   sessoes[slot].ultimoUso = agora;
+  Serial.println("Sessao criada para " + nome + " token=" + String(token));
   server.sendHeader("Set-Cookie", "sid=" + String(token) + "; Path=/");
 }
 
