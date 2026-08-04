@@ -53,7 +53,7 @@ void carregarWiFiConfig() {
   EEPROM.begin(EEPROM_SIZE);
   EEPROM.get(0, wifiConfig);
   EEPROM.end();
-  if (strlen(wifiConfig.ssid) == 0) {
+  if (wifiConfig.ssid[0] == 0xFF || wifiConfig.ssid[0] == 0x00) {
     strcpy(wifiConfig.ssid, "pmt-geral");
     strcpy(wifiConfig.password, "pmt@852456DECO");
   }
@@ -391,8 +391,12 @@ void conectarWiFi() {
     }
   }
   Serial.println("\nCriando Access Point...");
+  WiFi.disconnect();
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("botoeira", "852456");
+  if (!WiFi.softAP("botoeira", "85245678")) {
+    Serial.println("ERRO: falha ao criar o AP (senha deve ter 8+ caracteres)");
+    return;
+  }
   modoOperacao = "AP";
   Serial.println("AP criado: botoeira");
   Serial.println("IP: 192.168.4.1");
