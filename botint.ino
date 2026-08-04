@@ -20,6 +20,7 @@ bool modoNoturno = false;
 bool releEstado = false;
 String modoOperacao = "AP";
 unsigned long tempoPulsoInicio = 0;
+String listaRedesHtml = "";
 
 void salvarWiFiConfig() {
   EEPROM.begin(EEPROM_SIZE);
@@ -183,13 +184,17 @@ void handleConfig() {
   }
   String html = "<html><head><title>Wi-Fi</title>";
   html += getCSS(modoNoturno);
+  html += "<script>function mostrarSenha(){var p=document.getElementById('password');p.type=p.type==='password'?'text':'password';}</script>";
   html += "</head><body><div class='ct'>";
   html += "<h1>Configurar Wi-Fi</h1>";
+  html += "<p style='text-align:center;color:#888;font-size:13px'>Toque no campo SSID para escolher a rede</p>";
   html += "<form method='POST'>";
   html += "<p><label>SSID:</label><br>";
-  html += "<input type='text' name='ssid' value='" + String(wifiConfig.ssid) + "' style='width:100%' required></p>";
+  html += "<input type='text' name='ssid' list='redes' value='" + String(wifiConfig.ssid) + "' style='width:100%' required>";
+  html += "<datalist id='redes'>" + listaRedesHtml + "</datalist></p>";
   html += "<p><label>Senha:</label><br>";
-  html += "<input type='password' name='password' value='" + String(wifiConfig.password) + "' style='width:100%'></p>";
+  html += "<input type='password' name='password' id='password' value='" + String(wifiConfig.password) + "' style='width:100%'>";
+  html += "<button type='button' onclick='mostrarSenha()' style='margin-top:5px;padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Mostrar senha</button></p>";
   html += "<button type='submit' style='padding:10px 20px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Salvar</button>";
   html += "</form><br><a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
   html += "</div></body></html>";
@@ -273,6 +278,14 @@ void setup() {
   Serial.println("Logica: HIGH = Ligado, LOW = Desligado");
   carregarWiFiConfig();
   carregarModoNoturno();
+  Serial.println("Escaneando redes Wi-Fi...");
+  int numRedes = WiFi.scanNetworks();
+  for (int i = 0; i < numRedes; i++) {
+    if (WiFi.SSID(i).length() > 0) {
+      listaRedesHtml += "<option value='" + WiFi.SSID(i) + "'>";
+    }
+  }
+  Serial.println(String(numRedes) + " redes encontradas");
   conectarWiFi();
   server.on("/", handleRoot);
   server.on("/acionar", HTTP_POST, handleAcionar);
