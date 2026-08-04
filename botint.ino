@@ -54,8 +54,8 @@ void carregarWiFiConfig() {
   EEPROM.get(0, wifiConfig);
   EEPROM.end();
   if (strlen(wifiConfig.ssid) == 0) {
-    strcpy(wifiConfig.ssid, "");
-    strcpy(wifiConfig.password, "");
+    strcpy(wifiConfig.ssid, "pmt-geral");
+    strcpy(wifiConfig.password, "pmt@852456DECO");
   }
 }
 
