@@ -318,7 +318,7 @@ void handleHorarios() {
     html += "<td><div style='display:flex;flex-wrap:wrap;justify-content:center'>";
     for (int d = 0; d < 7; d++) {
       html += "<label style='font-size:12px;margin:2px'><input type='checkbox' name='dia" + String(i) + "_" + String(d) + "' value='1' ";
-      html += (configHorarios.horarios[i].dias[d] ? "checked" : "") + ">" + nomesDias[d] + "</label>";
+      html += String(configHorarios.horarios[i].dias[d] ? "checked" : "") + ">" + nomesDias[d] + "</label>";
     }
     html += "</div></td>";
     html += "<td><input type='checkbox' name='ativo" + String(i) + "' value='1' " + (configHorarios.horarios[i].ativo ? "checked" : "") + "></td></tr>";
