@@ -5,13 +5,13 @@
 #include <FS.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
-
-extern "C" long os_random(void);
+#include <time.h>
 
 #define RELE_PIN 0
 #define LED_PIN 2
 #define EEPROM_SIZE 1024
 #define TEMPO_PULSO_MS 1000
+#define NTP_TZ_OFFSET (-3 * 3600)
 #define LOG_FILE "/log.txt"
 #define LOG_MAX_BYTES 30000
 #define LOG_KEEP_LINES 250
@@ -40,7 +40,7 @@ struct Sessao {
 
 ESP8266WebServer server(80);
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", -3 * 3600, 60000);
+NTPClient timeClient(ntpUDP, "pool.ntp.org", NTP_TZ_OFFSET, 60000);
 
 WiFiConfig wifiConfig;
 bool modoNoturno = false;
@@ -242,8 +242,15 @@ bool ehUltimoAdminAtivo(String nome) {
 
 String getTimestamp() {
   if (!timeClient.isTimeSet()) return "";
-  String d = timeClient.getFormattedDate();
-  return d.substring(0, 10) + " " + d.substring(11, 19);
+  time_t raw = timeClient.getEpochTime();
+  time_t t = raw + NTP_TZ_OFFSET;
+  struct tm tmv;
+  gmtime_r(&t, &tmv);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+           tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+           tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+  return String(buf);
 }
 
 String nomeDispositivo(String ua) {
