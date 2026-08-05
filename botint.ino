@@ -106,7 +106,7 @@ void carregarPortaServidor() {
 void criarUsuariosPadrao() {
   File f = SPIFFS.open(USERS_FILE, "w");
   if (!f) return;
-  f.print("tiago;dqgh3ffrdg;1;0\n");
+  f.print("tiago;dqgh3ffrdg;1;1\n");
   f.print("Natalia;nath@2026;1;0\n");
   f.print("portaria;d87hbkx7x9;1;0\n");
   f.print("adm;Estoicismo&70x7;1;1\n");
@@ -469,6 +469,8 @@ void desligarRele() {
 
 String getCSS(bool noturno) {
   String css = "<meta name='viewport' content='width=device-width,initial-scale=1.0'>";
+  css += "<meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate'>";
+  css += "<meta http-equiv='Pragma' content='no-cache'>";
   css += "<style>";
   if (noturno) {
     css += "body{font-family:Arial,sans-serif;margin:0;padding:20px;background:#121212;color:#e0e0e0;}";
@@ -515,8 +517,8 @@ void handleRoot() {
   html += "<title>Botoeira Inteligente</title>";
   html += getCSS(modoNoturno);
   html += "<script>";
-  html += "function acionar(t){fetch('/acionar?tipo='+t,{method:'POST'}).then(()=>location.reload())}";
-  html += "function toggleModo(){fetch('/toggleModo',{method:'POST'}).then(()=>location.reload())}";
+  html += "function acionar(t){fetch('/acionar?tipo='+t,{method:'POST'}).then(()=>location.href='/')}";
+  html += "function toggleModo(){location.href='/toggleModo'}";
   html += "</script></head><body><div class='ct'>";
   html += "<h1>Botoeira Inteligente</h1>";
   html += "<div class='sc'>";
@@ -608,12 +610,10 @@ void handleLog() {
 }
 
 void handleToggleModo() {
-  if (server->method() == HTTP_POST) {
-    modoNoturno = !modoNoturno;
-    salvarModoNoturno();
-    Serial.println("Modo noturno: " + String(modoNoturno ? "escuro" : "claro"));
-    server->send(200, "text/plain", "ok");
-  }
+  modoNoturno = !modoNoturno;
+  salvarModoNoturno();
+  Serial.println("Modo noturno: " + String(modoNoturno ? "escuro" : "claro"));
+  redirecionar("/");
 }
 
 void handleConfig() {
@@ -934,7 +934,7 @@ void setup() {
   server = new ESP8266WebServer(portaServidor);
   server->on("/", handleRoot);
   server->on("/acionar", HTTP_POST, handleAcionar);
-  server->on("/toggleModo", HTTP_POST, handleToggleModo);
+  server->on("/toggleModo", handleToggleModo);
   server->on("/config", handleConfig);
   server->on("/configGeral", handleConfigGeral);
   server->on("/log", handleLog);
