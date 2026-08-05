@@ -10,6 +10,7 @@
 #define RELE_PIN 0
 #define LED_PIN 2
 #define EEPROM_SIZE 1024
+#define EEPROM_PORT_OFFSET (sizeof(WiFiConfig) + sizeof(bool))
 #define TEMPO_PULSO_MS 1000
 #define NTP_TZ_OFFSET (-3 * 3600)
 #define LOG_FILE "/log.txt"
@@ -38,12 +39,13 @@ struct Sessao {
   unsigned long ultimoUso;
 };
 
-ESP8266WebServer server(80);
+ESP8266WebServer* server = nullptr;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", NTP_TZ_OFFSET, 60000);
 
 WiFiConfig wifiConfig;
 bool modoNoturno = false;
+uint16_t portaServidor = 80;
 bool releEstado = false;
 String modoOperacao = "AP";
 unsigned long tempoPulsoInicio = 0;
@@ -84,6 +86,21 @@ void carregarModoNoturno() {
   EEPROM.get(sizeof(WiFiConfig), modoNoturno);
   EEPROM.end();
   if (modoNoturno != 0 && modoNoturno != 1) modoNoturno = false;
+}
+
+void salvarPortaServidor() {
+  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.put(EEPROM_PORT_OFFSET, portaServidor);
+  EEPROM.commit();
+  EEPROM.end();
+  Serial.println("Porta do servidor salva: " + String(portaServidor));
+}
+
+void carregarPortaServidor() {
+  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.get(EEPROM_PORT_OFFSET, portaServidor);
+  EEPROM.end();
+  if (portaServidor < 1 || portaServidor == 65535) portaServidor = 80;
 }
 
 void criarUsuariosPadrao() {
@@ -162,7 +179,7 @@ bool validarLogin(String nome, String senha) {
 }
 
 uint32_t tokenDaSessao() {
-  String cookie = server.header("Cookie");
+  String cookie = server->header("Cookie");
   int p = cookie.indexOf("sid=");
   if (p < 0) return 0;
   p += 4;
@@ -205,7 +222,7 @@ bool exigeLogin() {
 bool exigeAdmin() {
   if (!exigeLogin()) return false;
   if (ehAdmin()) return true;
-  server.send(200, "text/plain", "Acesso negado");
+  server->send(200, "text/plain", "Acesso negado");
   return false;
 }
 
@@ -214,7 +231,7 @@ void redirecionar(String destino) {
   html += "<meta http-equiv='refresh' content='0; url=" + destino + "'>";
   html += "<script>location.href='" + destino + "';</script>";
   html += "</head><body></body></html>";
-  server.send(200, "text/html", html);
+  server->send(200, "text/html", html);
 }
 
 void criarSessao(String nome) {
@@ -238,7 +255,7 @@ void criarSessao(String nome) {
   nome.toCharArray(sessoes[slot].nome, sizeof(sessoes[slot].nome));
   sessoes[slot].ultimoUso = agora;
   Serial.println("Sessao criada para " + nome + " token=" + String(token));
-  server.sendHeader("Set-Cookie", "sid=" + String(token) + "; Path=/");
+  server->sendHeader("Set-Cookie", "sid=" + String(token) + "; Path=/");
 }
 
 void encerrarSessao() {
@@ -249,7 +266,7 @@ void encerrarSessao() {
       break;
     }
   }
-  server.sendHeader("Set-Cookie", "sid=; Path=/; Max-Age=0");
+  server->sendHeader("Set-Cookie", "sid=; Path=/; Max-Age=0");
 }
 
 bool ehUltimoAdminAtivo(String nome) {
@@ -502,12 +519,6 @@ void handleRoot() {
   html += "function toggleModo(){fetch('/toggleModo',{method:'POST'}).then(()=>location.reload())}";
   html += "</script></head><body><div class='ct'>";
   html += "<h1>Botoeira Inteligente</h1>";
-  html += "<div class='sc'><div class='st'>";
-  html += "<strong>Ultimo acionamento - PESSOA:</strong><br>";
-  html += ultimoAcionamento("pessoa") + "<br><br>";
-  html += "<strong>Ultimo acionamento - VEICULO:</strong><br>";
-  html += ultimoAcionamento("veiculo");
-  html += "</div></div>";
   html += "<div class='sc'>";
   html += "<h2 style='text-align:center;margin-bottom:5px'>Painel de Acionamento</h2>";
   html += "<p style='text-align:center;color:#888;font-size:13px;margin-top:0'>Toque no botao para abrir o portao</p>";
@@ -524,9 +535,17 @@ void handleRoot() {
   html += "<div class='lb' style='color:#c00'>PESSOA</div></div>";
   html += "</div></div>";
   html += "<div class='sc'><div class='st'>";
+  html += "<strong>Ultimo acionamento - PESSOA:</strong><br>";
+  html += ultimoAcionamento("pessoa") + "<br><br>";
+  html += "<strong>Ultimo acionamento - VEICULO:</strong><br>";
+  html += ultimoAcionamento("veiculo");
+  html += "</div></div>";
+  html += "<div class='sc'><div class='st'>";
   html += "<strong>Modo:</strong> " + modoOperacao + " | ";
   html += "<strong>Wi-Fi:</strong> " + String((modoOperacao == "STA") ? WiFi.SSID() : "botoeira (AP)") + " | ";
-  html += "<strong>IP:</strong> " + String((modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1") + "<br>";
+  String endereco = String((modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1");
+  if (portaServidor != 80) endereco += ":" + String(portaServidor);
+  html += "<strong>IP:</strong> " + endereco + "<br>";
   html += "<strong>Rele:</strong> " + String(releEstado ? "ATIVADO" : "DESLIGADO") + " | ";
   html += "<strong>Usuario:</strong> " + usu;
   html += "</div></div>";
@@ -545,30 +564,30 @@ void handleRoot() {
   }
   html += "<a href='/logout'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer;margin:3px'>Sair</button></a>";
   html += "</div></div></body></html>";
-  server.send(200, "text/html", html);
+  server->send(200, "text/html", html);
 }
 
 void handleAcionar() {
   if (!exigeLogin()) return;
-  if (server.method() == HTTP_POST) {
-    String tipo = server.arg("tipo");
+  if (server->method() == HTTP_POST) {
+    String tipo = server->arg("tipo");
     if (tipo != "pessoa" && tipo != "veiculo") tipo = "pessoa";
-    IPAddress ip = server.client().remoteIP();
-    String ua = server.header("User-Agent");
+    IPAddress ip = server->client().remoteIP();
+    String ua = server->header("User-Agent");
     registrarLog(ip, nomeDispositivo(ua), nomeDaSessao(), tipo);
     ligarRele();
     tempoPulsoInicio = millis();
-    server.send(200, "text/plain", "PULSO_ACIONADO");
+    server->send(200, "text/plain", "PULSO_ACIONADO");
   }
 }
 
 void handleLog() {
   if (!exigeLogin()) return;
-  String filtroData = server.arg("data");
-  String filtroHora = server.arg("hora");
-  String filtroIp = server.arg("ip");
-  String filtroDispositivo = server.arg("dispositivo");
-  String filtroUsuario = server.arg("usuario");
+  String filtroData = server->arg("data");
+  String filtroHora = server->arg("hora");
+  String filtroIp = server->arg("ip");
+  String filtroDispositivo = server->arg("dispositivo");
+  String filtroUsuario = server->arg("usuario");
   String html = "<!DOCTYPE html><html><head>";
   html += getCSS(modoNoturno);
   html += "</head><body><div class='ct'>";
@@ -585,23 +604,23 @@ void handleLog() {
   servirLog(html, filtroData, filtroHora, filtroIp, filtroDispositivo, filtroUsuario);
   html += "<br><a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
   html += "</div></body></html>";
-  server.send(200, "text/html", html);
+  server->send(200, "text/html", html);
 }
 
 void handleToggleModo() {
-  if (server.method() == HTTP_POST) {
+  if (server->method() == HTTP_POST) {
     modoNoturno = !modoNoturno;
     salvarModoNoturno();
     Serial.println("Modo noturno: " + String(modoNoturno ? "escuro" : "claro"));
-    server.send(200, "text/plain", "ok");
+    server->send(200, "text/plain", "ok");
   }
 }
 
 void handleConfig() {
   if (!exigeLogin()) return;
-  if (server.method() == HTTP_POST) {
-    String ssid = server.arg("ssid");
-    String password = server.arg("password");
+  if (server->method() == HTTP_POST) {
+    String ssid = server->arg("ssid");
+    String password = server->arg("password");
     if (ssid.length() > 0) {
       strncpy(wifiConfig.ssid, ssid.c_str(), sizeof(wifiConfig.ssid) - 1);
       strncpy(wifiConfig.password, password.c_str(), sizeof(wifiConfig.password) - 1);
@@ -613,7 +632,7 @@ void handleConfig() {
       html += "<p>Reiniciando em <span id='cd'>5</span> segundos...</p>";
       html += "<script>let c=5;setInterval(()=>{c--;document.getElementById('cd').textContent=c;if(c<=0)location.href='/';},1000);</script>";
       html += "</div></body></html>";
-      server.send(200, "text/html", html);
+      server->send(200, "text/html", html);
       delay(2000);
       ESP.restart();
     }
@@ -639,11 +658,33 @@ void handleConfig() {
   html += "<button type='submit' style='padding:10px 20px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Salvar</button>";
   html += "</form><br><a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
   html += "</div></body></html>";
-  server.send(200, "text/html", html);
+  server->send(200, "text/html", html);
 }
 
 void handleConfigGeral() {
   if (!exigeLogin()) return;
+  if (server->method() == HTTP_POST) {
+    int p = server->arg("porta").toInt();
+    if (p >= 1 && p <= 65535) {
+      portaServidor = (uint16_t)p;
+      salvarPortaServidor();
+      String endereco = String((modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1") + ":" + String(portaServidor);
+      String html = "<html><head><title>Salvo</title>";
+      html += getCSS(modoNoturno);
+      html += "</head><body><div class='ct' style='text-align:center;padding:50px'>";
+      html += "<h1>Porta Alterada!</h1>";
+      html += "<p>Reiniciando em <span id='cd'>5</span> segundos...</p>";
+      html += "<p>Apos reiniciar acesse: <strong>http://" + endereco + "</strong></p>";
+      html += "<script>let c=5;setInterval(()=>{c--;document.getElementById('cd').textContent=c;if(c<=0)location.href='/';},1000);</script>";
+      html += "</div></body></html>";
+      server->send(200, "text/html", html);
+      delay(2000);
+      ESP.restart();
+      return;
+    }
+  }
+  String endereco = String((modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1");
+  if (portaServidor != 80) endereco += ":" + String(portaServidor);
   String html = "<html><head><title>Config Geral</title>";
   html += getCSS(modoNoturno);
   html += "</head><body><div class='ct'>";
@@ -653,9 +694,25 @@ void handleConfigGeral() {
   html += "<p>O botao <strong>PESSOA</strong> (vermelho) envia um pulso de <strong>1 segundo</strong> ao rele para abrir o portao para pessoas.</p>";
   html += "<p>O botao <strong>VEICULO</strong> (verde) envia o mesmo pulso de <strong>1 segundo</strong> para veiculos.</p>";
   html += "</div>";
+  html += "<div class='sc'>";
+  html += "<h3>Porta do Servidor</h3>";
+  html += "<p>Endereco atual: <strong>http://" + endereco + "</strong></p>";
+  html += "<form method='POST' style='display:flex;gap:8px;align-items:end;flex-wrap:wrap'>";
+  html += "<div><label>Porta (1 a 65535):</label><br><input type='number' name='porta' min='1' max='65535' value='" + String(portaServidor) + "' style='width:110px' required></div>";
+  html += "<button type='submit' style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Salvar e Reiniciar</button>";
+  html += "</form>";
+  html += "<p style='color:#888;font-size:13px'>Apos alterar, o aparelho reinicia e o acesso passa a ser pela nova porta.</p>";
+  html += "</div>";
+  if (ehAdmin()) {
+    html += "<div class='sc'>";
+    html += "<h3>Usuarios</h3>";
+    html += "<p>Gerencie usuarios e senhas (usuarios nao podem ser excluidos).</p>";
+    html += "<a href='/users'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Gerenciar Usuarios</button></a>";
+    html += "</div>";
+  }
   html += "<a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
   html += "</div></body></html>";
-  server.send(200, "text/html", html);
+  server->send(200, "text/html", html);
 }
 
 void handleStatus() {
@@ -664,11 +721,12 @@ void handleStatus() {
   doc["modo"] = modoOperacao;
   doc["wifi_ssid"] = (modoOperacao == "STA") ? WiFi.SSID() : "botoeira";
   doc["ip"] = (modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1";
+  doc["porta"] = portaServidor;
   doc["rele"] = releEstado;
   doc["modo_noturno"] = modoNoturno;
   String response;
   serializeJson(doc, response);
-  server.send(200, "application/json", response);
+  server->send(200, "application/json", response);
 }
 
 void handleNotFound() {
@@ -678,13 +736,13 @@ void handleNotFound() {
   html += "<h1>404 - Pagina nao encontrada</h1>";
   html += "<a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
   html += "</div></body></html>";
-  server.send(404, "text/html", html);
+  server->send(404, "text/html", html);
 }
 
 void handleLogin() {
-  if (server.method() == HTTP_POST) {
-    String nome = server.arg("usuario");
-    String senha = server.arg("senha");
+  if (server->method() == HTTP_POST) {
+    String nome = server->arg("usuario");
+    String senha = server->arg("senha");
     if (validarLogin(nome, senha)) {
       criarSessao(nome);
       Serial.println("Login OK: " + nome);
@@ -703,7 +761,7 @@ void handleLogin() {
     html += "<p><label>Senha:</label><br><input type='password' name='senha' style='width:100%' required></p>";
     html += "<button type='submit' style='width:100%;padding:10px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Entrar</button>";
     html += "</form></div></body></html>";
-    server.send(200, "text/html", html);
+    server->send(200, "text/html", html);
     return;
   }
   if (autenticado()) {
@@ -720,7 +778,7 @@ void handleLogin() {
   html += "<p><label>Senha:</label><br><input type='password' name='senha' style='width:100%' required></p>";
   html += "<button type='submit' style='width:100%;padding:10px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Entrar</button>";
   html += "</form></div></body></html>";
-  server.send(200, "text/html", html);
+  server->send(200, "text/html", html);
 }
 
 void handleLogout() {
@@ -731,49 +789,39 @@ void handleLogout() {
 void handleUsers() {
   if (!exigeAdmin()) return;
   String meuNome = nomeDaSessao();
-  if (server.method() == HTTP_POST) {
-    String acao = server.arg("acao");
+  if (server->method() == HTTP_POST) {
+    String acao = server->arg("acao");
     if (acao == "add") {
-      String nome = server.arg("usuario");
-      String senha = server.arg("senha");
+      String nome = server->arg("usuario");
+      String senha = server->arg("senha");
       if (nome.length() > 0 && senha.length() > 0 && nome.indexOf(';') < 0 && senha.indexOf(';') < 0 && nome.length() < sizeof(usuarios[numUsuarios].nome) && senha.length() < sizeof(usuarios[numUsuarios].senha) && numUsuarios < MAX_USERS && indiceUsuario(nome) < 0) {
         nome.toCharArray(usuarios[numUsuarios].nome, sizeof(usuarios[numUsuarios].nome));
         senha.toCharArray(usuarios[numUsuarios].senha, sizeof(usuarios[numUsuarios].senha));
         usuarios[numUsuarios].ativo = true;
-        usuarios[numUsuarios].admin = server.hasArg("admin");
+        usuarios[numUsuarios].admin = server->hasArg("admin");
         numUsuarios++;
         salvarUsuarios();
       }
     } else if (acao == "toggle") {
-      String nome = server.arg("usuario");
+      String nome = server->arg("usuario");
       int i = indiceUsuario(nome);
       if (i >= 0 && !meuNome.equalsIgnoreCase(nome) && !ehUltimoAdminAtivo(nome)) {
         usuarios[i].ativo = !usuarios[i].ativo;
         salvarUsuarios();
       }
     } else if (acao == "admin") {
-      String nome = server.arg("usuario");
+      String nome = server->arg("usuario");
       int i = indiceUsuario(nome);
       if (i >= 0 && !ehUltimoAdminAtivo(nome)) {
         usuarios[i].admin = !usuarios[i].admin;
         salvarUsuarios();
       }
     } else if (acao == "senha") {
-      String nome = server.arg("usuario");
-      String senha = server.arg("senha");
+      String nome = server->arg("usuario");
+      String senha = server->arg("senha");
       int i = indiceUsuario(nome);
       if (i >= 0 && senha.length() > 0 && senha.indexOf(';') < 0) {
         senha.toCharArray(usuarios[i].senha, sizeof(usuarios[i].senha));
-        salvarUsuarios();
-      }
-    } else if (acao == "excluir") {
-      String nome = server.arg("usuario");
-      int i = indiceUsuario(nome);
-      if (i >= 0 && !meuNome.equalsIgnoreCase(nome) && !ehUltimoAdminAtivo(nome)) {
-        for (int j = i; j < numUsuarios - 1; j++) {
-          usuarios[j] = usuarios[j + 1];
-        }
-        numUsuarios--;
         salvarUsuarios();
       }
     }
@@ -781,23 +829,32 @@ void handleUsers() {
     return;
   }
   String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<title>Usuarios</title>";
   html += getCSS(modoNoturno);
   html += "</head><body><div class='ct'>";
   html += "<h1>Gerenciar Usuarios</h1>";
-  html += "<table><tr><th>Usuario</th><th>Admin</th><th>Status</th><th>Acoes</th></tr>";
+  html += "<p style='text-align:center;color:#888;font-size:13px'>Usuarios nao podem ser excluidos - apenas senha, perfil e status podem ser alterados.</p>";
+  html += "<div class='sc'><h3>Usuarios Cadastrados</h3>";
+  html += "<table><tr><th>Usuario</th><th>Perfil</th><th>Status</th><th>Nova Senha</th><th>Acoes</th></tr>";
   for (int i = 0; i < numUsuarios; i++) {
     String nome = String(usuarios[i].nome);
-    html += "<tr><td>" + nome + "</td>";
-    html += "<td>" + String(usuarios[i].admin ? "sim" : "nao") + "</td>";
-    html += "<td>" + String(usuarios[i].ativo ? "ativo" : "desabilitado") + "</td>";
+    String perfil = usuarios[i].admin ? "Admin" : "Usuario";
+    String status = usuarios[i].ativo ? "Ativo" : "Desabilitado";
+    html += "<tr><td><strong>" + nome + "</strong></td>";
+    html += "<td>" + perfil + "</td>";
+    html += "<td>" + status + "</td>";
+    html += "<td><form method='POST' style='display:flex;gap:4px;align-items:center;justify-content:center'>";
+    html += "<input type='hidden' name='acao' value='senha'>";
+    html += "<input type='hidden' name='usuario' value='" + nome + "'>";
+    html += "<input type='password' name='senha' placeholder='nova senha' style='width:100px'>";
+    html += "<button type='submit' style='padding:4px 10px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Alterar</button></form></td>";
     html += "<td>";
-    html += "<form method='POST' style='display:inline'><input type='hidden' name='acao' value='toggle'><input type='hidden' name='usuario' value='" + nome + "'><button type='submit' style='padding:4px 8px'>" + String(usuarios[i].ativo ? "Desabilitar" : "Habilitar") + "</button></form> ";
-    html += "<form method='POST' style='display:inline'><input type='hidden' name='acao' value='admin'><input type='hidden' name='usuario' value='" + nome + "'><button type='submit' style='padding:4px 8px'>" + String(usuarios[i].admin ? "Remover Admin" : "Tornar Admin") + "</button></form> ";
-    html += "<form method='POST' style='display:inline'><input type='hidden' name='acao' value='excluir'><input type='hidden' name='usuario' value='" + nome + "'><button type='submit' style='padding:4px 8px' onclick='return confirm(\"Excluir usuario?\")'>Excluir</button></form> ";
-    html += "<form method='POST' style='display:inline'><input type='hidden' name='acao' value='senha'><input type='hidden' name='usuario' value='" + nome + "'><input type='password' name='senha' placeholder='nova senha' style='width:90px'><button type='submit' style='padding:4px 8px'>Alterar</button></form>";
+    html += "<form method='POST' style='display:inline'><input type='hidden' name='acao' value='toggle'><input type='hidden' name='usuario' value='" + nome + "'><button type='submit' style='padding:4px 10px;border:none;border-radius:5px;cursor:pointer'>" + String(usuarios[i].ativo ? "Desabilitar" : "Habilitar") + "</button></form> ";
+    html += "<form method='POST' style='display:inline'><input type='hidden' name='acao' value='admin'><input type='hidden' name='usuario' value='" + nome + "'><button type='submit' style='padding:4px 10px;border:none;border-radius:5px;cursor:pointer'>" + String(usuarios[i].admin ? "Remover Admin" : "Tornar Admin") + "</button></form>";
     html += "</td></tr>";
   }
-  html += "</table>";
+  html += "</table></div>";
   html += "<div class='sc'><h3>Adicionar Usuario</h3>";
   html += "<form method='POST' style='display:flex;flex-wrap:wrap;gap:8px;align-items:end'>";
   html += "<input type='hidden' name='acao' value='add'>";
@@ -806,9 +863,12 @@ void handleUsers() {
   html += "<div><label><input type='checkbox' name='admin' value='1'> Admin</label></div>";
   html += "<button type='submit' style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer;background:#2196F3;color:#fff'>Adicionar</button>";
   html += "</form></div>";
-  html += "<br><a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar</button></a>";
+  html += "<div style='text-align:center;margin-top:10px'>";
+  html += "<a href='/configGeral'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Voltar para Config</button></a> ";
+  html += "<a href='/'><button style='padding:8px 16px;border:none;border-radius:5px;cursor:pointer'>Pagina Principal</button></a>";
+  html += "</div>";
   html += "</div></body></html>";
-  server.send(200, "text/html", html);
+  server->send(200, "text/html", html);
 }
 
 void conectarWiFi() {
@@ -870,28 +930,32 @@ void setup() {
   }
   Serial.println(String(numRedes) + " redes encontradas");
   conectarWiFi();
-  server.on("/", handleRoot);
-  server.on("/acionar", HTTP_POST, handleAcionar);
-  server.on("/toggleModo", HTTP_POST, handleToggleModo);
-  server.on("/config", handleConfig);
-  server.on("/configGeral", handleConfigGeral);
-  server.on("/log", handleLog);
-  server.on("/status", handleStatus);
-  server.on("/login", handleLogin);
-  server.on("/logout", handleLogout);
-  server.on("/users", handleUsers);
-  server.onNotFound(handleNotFound);
-  server.collectHeaders("User-Agent", "Cookie");
-  server.begin();
-  Serial.println("Servidor web iniciado na porta 80");
+  carregarPortaServidor();
+  server = new ESP8266WebServer(portaServidor);
+  server->on("/", handleRoot);
+  server->on("/acionar", HTTP_POST, handleAcionar);
+  server->on("/toggleModo", HTTP_POST, handleToggleModo);
+  server->on("/config", handleConfig);
+  server->on("/configGeral", handleConfigGeral);
+  server->on("/log", handleLog);
+  server->on("/status", handleStatus);
+  server->on("/login", handleLogin);
+  server->on("/logout", handleLogout);
+  server->on("/users", handleUsers);
+  server->onNotFound(handleNotFound);
+  server->collectHeaders("User-Agent", "Cookie");
+  server->begin();
+  Serial.println("Servidor web iniciado na porta " + String(portaServidor));
   timeClient.begin();
   Serial.println("Sistema pronto!");
-  Serial.println("Acesse: http://" + String((modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1"));
+  String endereco = String((modoOperacao == "STA") ? WiFi.localIP().toString() : "192.168.4.1");
+  if (portaServidor != 80) endereco += ":" + String(portaServidor);
+  Serial.println("Acesse: http://" + endereco);
   Serial.println("============================================================");
 }
 
 void loop() {
-  server.handleClient();
+  server->handleClient();
   timeClient.update();
   if (releEstado && millis() - tempoPulsoInicio >= TEMPO_PULSO_MS) {
     desligarRele();
