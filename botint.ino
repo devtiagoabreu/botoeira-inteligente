@@ -9,6 +9,46 @@
 
 #define RELE_PIN 0
 #define LED_PIN 2
+
+// ============================================================
+// LIMITACAO DE HARDWARE CONHECIDA (placa rele ESP-01 v1.0, 1CH 5V)
+// ------------------------------------------------------------
+// O GPIO0 controla o rele (ativo em HIGH: HIGH = ligado, NO fecha).
+// O boot do ESP-01 exige GPIO0 em HIGH. O resistor R2 original puxava
+// GPIO0 para GND -> modo flash na energizacao (firmware nunca rodava).
+// Removido o R2, o GPIO0 fica flutuando no pull-up interno fraco e,
+// nos ~200-300ms de boot antes do setup() rodar, o rele ENERGIZA.
+// Consequencia: ao religar a energia (queda/retoque), o NO fecha por
+// alguns ms e o portao ABRE sozinho. Comportamento aceito pelo usuario
+// nesta revisao.
+//
+// Correcoes possiveis (nao aplicadas):
+//  - (A) Modulo de retardo de alimentacao da bobina do rele.
+//  - (B) Relé/MOSFET em serie com os fios do portao controlado pelo
+//        GPIO15 (pull-down interno rígido -> LOW no boot, portao
+//        desconectado ate o firmware liberar; fail-safe). Implementar:
+//        #define ENABLE_PIN 15  ->  setup: pinMode(15,OUTPUT); digitalWrite(15,HIGH);
+//  - (C) PESQUISA (2026): NENHUM modulo rele plug-in de ESP-01 elimina
+//        100% o problema — o ESP-01 so expoe GPIO0/GPIO2 e ambos oscilam
+//        no boot (clock de 26MHz em GPIO0). Opcoes:
+//          - ESP-01S Relay Module V4.0 (Tayda/EDN): driver ACTIVE-LOW
+//            (GPIO0 LOW = rele ON). No boot GPIO0 fica HIGH -> rele off
+//            na maior parte do tempo. AINDA pode piscar no boot (relatos
+//            na comunidade/github IOT-MCU). Exige inverter a logica no
+//            firmware: LOW = ligado. MELHOR opcao plug-in.
+//          - Rele bi-estavel (latching): mantem o ultimo estado sem
+//            energia -> portao nunca abre na subida. Nao existe plug-in
+//            pronto para ESP-01 (custom, ex.: Elektor wifi switch).
+//          - Capacitor no gate do MOSFET 2N7002 (RC ~100ms) da placa
+//            atual: retarda a energizacao e ignora o flicker de boot.
+//
+// DECISAO DO PROJETO (registrada em 05/2026): usar a opcao C1
+// (ESP-01S Relay Module V4.0). NAO altera nada no firmware nesta
+// revisao: a logica atual (HIGH = ligado, LOW = desligado) continua
+// valendo para a placa v1.0. Ao trocar fisicamente para a V4.0,
+// inverter para LOW = ligado nas funcoes ligarRele()/desligarRele().
+// ============================================================
+
 #define EEPROM_SIZE 1024
 #define EEPROM_PORT_OFFSET (sizeof(WiFiConfig) + sizeof(bool))
 #define TEMPO_PULSO_MS 1000
