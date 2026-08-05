@@ -264,8 +264,7 @@ bool ehUltimoAdminAtivo(String nome) {
 
 String getTimestamp() {
   if (!timeClient.isTimeSet()) return "";
-  time_t raw = timeClient.getEpochTime();
-  time_t t = raw + NTP_TZ_OFFSET;
+  time_t t = timeClient.getEpochTime();
   struct tm tmv;
   gmtime_r(&t, &tmv);
   char buf[24];
@@ -590,10 +589,10 @@ void handleLog() {
 }
 
 void handleToggleModo() {
-  if (!exigeLogin()) return;
   if (server.method() == HTTP_POST) {
     modoNoturno = !modoNoturno;
     salvarModoNoturno();
+    Serial.println("Modo noturno: " + String(modoNoturno ? "escuro" : "claro"));
     server.send(200, "text/plain", "ok");
   }
 }
